@@ -1,6 +1,6 @@
 [package]
 name = "rust-hotspot"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.89"
 description = "Windows Wi-Fi hotspot with hidden SSID, 2.4/5 GHz band selection and static DHCP leases"

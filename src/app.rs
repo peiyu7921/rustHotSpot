@@ -750,7 +750,69 @@ impl HotspotApp {
             )
             .child(row().h_full().grow(1.0).min_w(0.0).window_drag_area())
             .child(self.titlebar_right())
-            .child(window_controls(win.maximized))
+            .child(self.window_buttons(win.maximized))
+    }
+
+    /// 最小化/最大化沿用 charis 的窗口控制；关闭按钮改走 Msg，避免
+    /// `WindowControl::Close` 直接结束事件循环，绕过「关闭到托盘」。
+    fn window_buttons(&self, maximized: bool) -> Element<Msg> {
+        let c = theme().colors.clone();
+        let button =
+            |glyph: Icon, control: Option<WindowControl>, danger: bool, click: Option<Msg>, id: &str| {
+                let colors = c.clone();
+                let mut button = div()
+                    .id(id)
+                    .center()
+                    .w(46.0)
+                    .h_full()
+                    .color(colors.text_muted)
+                    .transition(0.08)
+                    .hover(move |s| {
+                        if danger {
+                            s.bg(hex("#e81123")).color(Color::WHITE)
+                        } else {
+                            s.bg(colors.hover).color(colors.text)
+                        }
+                    })
+                    .child(icon(glyph).font_size(14.0).weight(Weight(300)));
+                if let Some(control) = control {
+                    button = button.window_control(control);
+                }
+                if let Some(msg) = click {
+                    button = button
+                        .on_click(msg)
+                        .focusable()
+                        .role(Role::Button)
+                        .aria_label("关闭窗口");
+                }
+                button
+            };
+
+        row()
+            .h_full()
+            .shrink(0.0)
+            .child(button(
+                Icon::Minus,
+                Some(WindowControl::Minimize),
+                false,
+                None,
+                "window-control/minimize",
+            ))
+            .child(button(
+                if maximized { Icon::Restore } else { Icon::Maximize },
+                Some(WindowControl::ToggleMaximize),
+                false,
+                None,
+                "window-control/maximize",
+            ))
+            .child(button(
+                Icon::Close,
+                None,
+                true,
+                Some(Msg::CloseRequested),
+                "window-control/close",
+            ))
+            .class("window-controls")
     }
 
     fn titlebar_right(&self) -> Element<Msg> {
