@@ -12,6 +12,7 @@ use crate::config::{Band, Config, MacBinding, Mode};
 use crate::dhcp;
 use crate::hotspot::native::ClientInfo;
 use crate::netcfg;
+use crate::tray::{self, TrayAction};
 use crate::util;
 use crate::worker::{WorkerCommand, WorkerEvent};
 
@@ -62,6 +63,8 @@ pub enum Msg {
     AddBinding,
     RemoveBinding(usize),
     CloseRequested,
+    TrayShow,
+    TrayQuit,
 }
 
 pub fn run() -> Result<()> {
@@ -85,6 +88,7 @@ pub fn run() -> Result<()> {
         .frameless(true)
         .icon_png(include_bytes!("../assets/icon.png"));
 
+    tray::start();
     charis_ui::run(HotspotApp::new(), options).map_err(|err| anyhow::anyhow!("{err}"))
 }
 
@@ -113,6 +117,8 @@ pub struct HotspotApp {
     active_tab: Tab,
     tab_anim: Option<Instant>,
     closing: bool,
+    hidden: bool,
+    tray_ready: bool,
     dark: bool,
     qr_image: Option<Image>,
     qr_key: String,
@@ -154,6 +160,8 @@ impl HotspotApp {
             active_tab: Tab::Settings,
             tab_anim: None,
             closing: false,
+            hidden: false,
+            tray_ready: false,
             dark,
             qr_image: None,
             qr_key: String::new(),
@@ -364,7 +372,20 @@ impl HotspotApp {
         let _ = self.cmd_tx.send(WorkerCommand::Stop);
     }
 
-    fn request_close(&mut self, cx: &mut Cx<Msg>) {
+    fn hide_to_tray(&mut self, cx: &mut Cx<Msg>) {
+        // 托盘不可用时绝不能把窗口藏起来，否则程序无法恢复。
+        if !tray::is_ready() {
+            self.request_quit(cx);
+            return;
+        }
+        let _ = self.save_config();
+        tray::hide_main_window();
+        self.hidden = true;
+        self.message = "已最小化到系统托盘（右键托盘图标可退出）".into();
+        self.message_error = false;
+    }
+
+    fn request_quit(&mut self, cx: &mut Cx<Msg>) {
         if self.closing {
             return;
         }
@@ -482,6 +503,7 @@ impl HotspotApp {
 
 impl Drop for HotspotApp {
     fn drop(&mut self) {
+        tray::shutdown();
         let _ = self.cmd_tx.send(WorkerCommand::Shutdown);
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
@@ -493,6 +515,17 @@ impl App for HotspotApp {
     type Msg = Msg;
 
     fn update(&mut self, msg: Msg, cx: &mut Cx<Msg>) {
+        // 托盘线程拿不到 Cx，第一次 update 时把 proxy 交给它，之后托盘点击直接变成消息。
+        if !self.tray_ready {
+            self.tray_ready = true;
+            let proxy = cx.proxy();
+            tray::attach(move |action| {
+                proxy.send(match action {
+                    TrayAction::Show => Msg::TrayShow,
+                    TrayAction::Quit => Msg::TrayQuit,
+                });
+            });
+        }
         match msg {
             Msg::Poll => {
                 if self.poll_worker() {
@@ -622,13 +655,20 @@ impl App for HotspotApp {
                     }
                 }
             }
-            Msg::CloseRequested => self.request_close(cx),
+            Msg::CloseRequested => self.hide_to_tray(cx),
+            Msg::TrayShow => {
+                self.hidden = false;
+                tray::show_main_window();
+            }
+            Msg::TrayQuit => self.request_quit(cx),
         }
     }
 
     fn subscriptions(&self) -> Subscriptions<Msg> {
-        let polling = self.is_running() || self.busy || self.closing;
-        let animating = self.busy || self.tab_anim.is_some();
+        // 热点运行/忙碌/退出中需要轮询工作线程；第一次 update 前也轮询一次，
+        // 好把托盘代理装好。之后托盘点击通过 proxy 直接唤醒事件循环。
+        let polling = self.is_running() || self.busy || self.closing || !self.tray_ready;
+        let animating = !self.hidden && (self.busy || self.tab_anim.is_some());
         Subscriptions::none()
             .on_close_request(Msg::CloseRequested)
             .every_if(polling, Duration::from_millis(200), Msg::Poll)

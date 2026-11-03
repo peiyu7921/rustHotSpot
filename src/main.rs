@@ -5,6 +5,7 @@ mod config;
 mod dhcp;
 mod hotspot;
 mod netcfg;
+mod tray;
 mod util;
 mod worker;
 
