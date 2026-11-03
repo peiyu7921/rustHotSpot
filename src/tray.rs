@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Shell::{
@@ -14,12 +15,12 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, EnumThreadWindows, GetCursorPos, GetMessageW, IsIconic, IsWindowVisible,
-    LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage, MF_SEPARATOR, MF_STRING, MSG,
-    SW_HIDE, SW_RESTORE, SW_SHOW, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_STYLE,
-    WM_APP, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
-    WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW,
+    DispatchMessageW, EnumThreadWindows, GetCursorPos, GetMessageW,
+    IsIconic, IsWindowVisible, LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW,
+    RegisterWindowMessageW, SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage,
+    MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_RESTORE, SW_SHOW, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY,
+    WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW,
 };
 
 /// 托盘自己的隐藏消息窗口（与主窗口同进程，但在独立的线程和隐藏窗口里）。
@@ -95,6 +96,9 @@ pub fn show_main_window() {
                 let _ = ShowWindow(hwnd, SW_SHOW);
             }
             let _ = SetForegroundWindow(hwnd);
+            // 隐藏期间 CPU 渲染缓冲可能失效；标记一次重绘，让事件循环回来时
+            // 生成一帧新的画面（真正的完整 damage 由 UI 的恢复淡入保证）。
+            let _ = InvalidateRect(Some(hwnd), None, false);
         }
     }
 }

@@ -116,6 +116,7 @@ pub struct HotspotApp {
     show_add_binding: bool,
     active_tab: Tab,
     tab_anim: Option<Instant>,
+    show_anim: Option<Instant>,
     closing: bool,
     hidden: bool,
     tray_ready: bool,
@@ -159,6 +160,7 @@ impl HotspotApp {
             show_add_binding: false,
             active_tab: Tab::Settings,
             tab_anim: None,
+            show_anim: None,
             closing: false,
             hidden: false,
             tray_ready: false,
@@ -538,6 +540,11 @@ impl App for HotspotApp {
                         self.tab_anim = None;
                     }
                 }
+                if let Some(start) = self.show_anim {
+                    if start.elapsed() >= Duration::from_millis(220) {
+                        self.show_anim = None;
+                    }
+                }
             }
             Msg::Tab(tab) => {
                 if self.active_tab != tab {
@@ -658,6 +665,9 @@ impl App for HotspotApp {
             Msg::CloseRequested => self.hide_to_tray(cx),
             Msg::TrayShow => {
                 self.hidden = false;
+                // 强制走一次完整重绘：窗口隐藏期间 CPU renderer 的缓冲会失效，
+                // 淡入同时让整窗产生 damage，避免恢复后出现全透明窗口。
+                self.show_anim = Some(Instant::now());
                 tray::show_main_window();
             }
             Msg::TrayQuit => self.request_quit(cx),
@@ -668,7 +678,8 @@ impl App for HotspotApp {
         // 热点运行/忙碌/退出中需要轮询工作线程；第一次 update 前也轮询一次，
         // 好把托盘代理装好。之后托盘点击通过 proxy 直接唤醒事件循环。
         let polling = self.is_running() || self.busy || self.closing || !self.tray_ready;
-        let animating = !self.hidden && (self.busy || self.tab_anim.is_some());
+        let animating = !self.hidden
+            && (self.busy || self.tab_anim.is_some() || self.show_anim.is_some());
         Subscriptions::none()
             .on_close_request(Msg::CloseRequested)
             .every_if(polling, Duration::from_millis(200), Msg::Poll)
@@ -698,10 +709,20 @@ impl App for HotspotApp {
     fn view(&self) -> Element<Msg> {
         let th = theme();
         let c = th.colors.clone();
+        let (show_opacity, show_offset) = match self.show_anim {
+            Some(start) => {
+                let t = (start.elapsed().as_secs_f32() / 0.18).clamp(0.0, 1.0);
+                let eased = Easing::Standard.apply(t).max(0.02);
+                (eased, (1.0 - eased) * 6.0)
+            }
+            None => (1.0, 0.0),
+        };
 
         let mut root = col()
             .size_full()
             .bg(c.background)
+            .opacity(show_opacity)
+            .translate(0.0, show_offset)
             .child(self.window_chrome())
             .child(self.main_ui());
 
